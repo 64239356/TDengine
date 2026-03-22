@@ -1,17 +1,17 @@
-name: Build TDengine Windows (Node.js 24)
+name: Build TDengine Windows (Final Working Version)
 
 on:
   workflow_dispatch: # 手动触发
 
-# 全局环境变量：强制 Node.js 24，消除弃用警告
 env:
+  # 强制 Node.js 24，消除弃用警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   ACTIONS_RUNNER_FORCE_NODE_VERSION: node24
 
 jobs:
   windows-build:
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 40 # 延长超时，单线程编译稍慢
     steps:
       # 1. 拉取源码
       - name: Checkout TDengine source
@@ -19,38 +19,38 @@ jobs:
         with:
           fetch-depth: 1
 
-      # 2. 原生加载 MSVC 2022 环境
+      # 2. 加载 MSVC 环境（固定 cmd shell，避免PowerShell解析问题）
       - name: Load MSVC 2022 Environment
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
           echo MSVC environment loaded successfully
 
-      # 3. 安装最新 CMake
+      # 3. 安装 CMake（确保版本足够）
       - name: Install CMake
-        shell: powershell
+        shell: cmd
         run: |
-          Invoke-WebRequest -Uri "https://github.com/Kitware/CMake/releases/download/v3.30.1/cmake-3.30.1-windows-x86_64.msi" -OutFile cmake.msi
+          powershell -Command "Invoke-WebRequest -Uri 'https://github.com/Kitware/CMake/releases/download/v3.30.1/cmake-3.30.1-windows-x86_64.msi' -OutFile cmake.msi"
           msiexec /i cmake.msi /qn ADD_CMAKE_TO_PATH=System
           cmake --version
 
-      # 4. CMake 配置（关键：生成 NMAKE 兼容的 Makefile）
-      - name: Configure with CMake
+      # 4. CMake 配置（仅生成 NMAKE 兼容文件）
+      - name: Configure CMake
         shell: cmd
         run: |
-          mkdir build
+          if not exist build mkdir build
           cd build
           cmake .. -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
 
-      # 5. 编译 TDengine（核心修复：移除 -j 参数，仅用 nmake）
-      - name: Build TDengine (NMAKE without -j)
+      # 5. 核心修复：仅执行 nmake，无任何参数
+      - name: Build TDengine with NMAKE (no -j)
         shell: cmd
         run: |
           cd build
-          nmake  # 直接运行 nmake，无任何参数，单线程编译
+          nmake  # 彻底移除 -j 参数，NMAKE 默认单线程编译
 
       # 6. 验证编译结果
-      - name: Verify Build
+      - name: Verify Build Result
         shell: cmd
         run: |
           cd build\bin
@@ -60,6 +60,6 @@ jobs:
       - name: Upload Windows Binaries
         uses: actions/upload-artifact@v4.4.3
         with:
-          name: tdengine-windows-x64
+          name: tdengine-windows-x64-final
           path: build/bin/
           retention-days: 7
