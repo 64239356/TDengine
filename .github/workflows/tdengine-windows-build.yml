@@ -3,24 +3,52 @@ name: Build TDengine Windows
 on:
   workflow_dispatch: # 手动触发构建
 
+env:
+  # 强制使用 Node.js 24，消除弃用警告
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   windows-build:
-    runs-on: windows-2022 # 官方 Windows 虚拟机，预装 VS 2022
+    runs-on: windows-2022 # 预装 VS 2022 的官方 Windows 虚拟机
+    timeout-minutes: 30 # 延长超时时间，避免编译中断
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout code (Node.js 24 compatible)
+        uses: actions/checkout@v4.2.2 # 升级到支持 Node.js 24 的最新版本
+        with:
+          fetch-depth: 1 # 浅克隆，加速 checkout
+
+      - name: Load MSVC environment (Node.js 24 compatible)
+        uses: ilammy/msvc-dev-cmd@v1.16.0 # 升级到最新版本，适配 Node.js 24
+        with:
+          arch: x64 # 指定 64 位编译（TDengine 推荐）
+          toolset: v143 # VS 2022 对应的工具集版本
+
+      - name: Install CMake (补充，确保版本≥3.20)
+        uses: lukka/get-cmake@v3.30.0 # 独立安装最新 CMake，避免系统版本过低
 
       - name: Configure CMake
-        uses: ilammy/msvc-dev-cmd@v1 # 自动加载 MSVC 环境
-
-      - name: Create build directory
-        run: mkdir build && cd build && cmake .. -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -Force build | Out-Null
+          cd build
+          cmake .. -G "NMake Makefiles" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
 
       - name: Build TDengine
-        run: cd build && nmake -j4
+        working-directory: ${{ github.workspace }}/build
+        run: nmake -j $Env:NUMBER_OF_PROCESSORS # 使用全部 CPU 核心加速编译
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+      - name: Verify build result
+        working-directory: ${{ github.workspace }}/build/bin
+        run: .\taos.exe --version # 验证编译产物是否可用
+
+      - name: Upload Windows build artifacts
+        uses: actions/upload-artifact@v4.4.3 # 升级到支持 Node.js 24 的版本
         with:
-          name: tdengine-windows-bin
-          path: build/bin/ # 上传编译产物（taosd.exe、taos.exe 等）
+          name: tdengine-windows-x64-bin
+          path: |
+            ${{ github.workspace }}/build/bin/*.exe
+            ${{ github.workspace }}/build/bin/*.dll
+            ${{ github.workspace }}/build/bin/*.pdb
+          retention-days: 7 # 产物保留 7 天，可按需调整
