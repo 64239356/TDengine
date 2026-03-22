@@ -1,54 +1,65 @@
-name: Build TDengine Windows
+name: Build TDengine Windows (Node.js 24)
 
 on:
-  workflow_dispatch: # 手动触发构建
+  workflow_dispatch: # 手动触发
 
+# 全局环境变量：强制 Node.js 24，消除弃用警告
 env:
-  # 强制使用 Node.js 24，消除弃用警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  ACTIONS_RUNNER_FORCE_NODE_VERSION: node24
 
 jobs:
   windows-build:
-    runs-on: windows-2022 # 预装 VS 2022 的官方 Windows 虚拟机
-    timeout-minutes: 30 # 延长超时时间，避免编译中断
+    runs-on: windows-2022
+    timeout-minutes: 30
     steps:
-      - name: Checkout code (Node.js 24 compatible)
-        uses: actions/checkout@v4.2.2 # 升级到支持 Node.js 24 的最新版本
+      # 1. 拉取源码
+      - name: Checkout TDengine source
+        uses: actions/checkout@v4.2.2
         with:
-          fetch-depth: 1 # 浅克隆，加速 checkout
+          fetch-depth: 1
 
-      - name: Load MSVC environment (Node.js 24 compatible)
-        uses: ilammy/msvc-dev-cmd@v1.16.0 # 升级到最新版本，适配 Node.js 24
-        with:
-          arch: x64 # 指定 64 位编译（TDengine 推荐）
-          toolset: v143 # VS 2022 对应的工具集版本
-
-      - name: Install CMake (补充，确保版本≥3.20)
-        uses: lukka/get-cmake@v3.30.0 # 独立安装最新 CMake，避免系统版本过低
-
-      - name: Configure CMake
-        working-directory: ${{ github.workspace }}
+      # 2. 原生加载 MSVC 2022 环境
+      - name: Load MSVC 2022 Environment
+        shell: cmd
         run: |
-          mkdir -Force build | Out-Null
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          echo MSVC environment loaded successfully
+
+      # 3. 安装最新 CMake
+      - name: Install CMake
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Kitware/CMake/releases/download/v3.30.1/cmake-3.30.1-windows-x86_64.msi" -OutFile cmake.msi
+          msiexec /i cmake.msi /qn ADD_CMAKE_TO_PATH=System
+          cmake --version
+
+      # 4. CMake 配置（关键：生成 NMAKE 兼容的 Makefile）
+      - name: Configure with CMake
+        shell: cmd
+        run: |
+          mkdir build
           cd build
-          cmake .. -G "NMake Makefiles" `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+          cmake .. -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build TDengine
-        working-directory: ${{ github.workspace }}/build
-        run: nmake -j $Env:NUMBER_OF_PROCESSORS # 使用全部 CPU 核心加速编译
+      # 5. 编译 TDengine（核心修复：移除 -j 参数，仅用 nmake）
+      - name: Build TDengine (NMAKE without -j)
+        shell: cmd
+        run: |
+          cd build
+          nmake  # 直接运行 nmake，无任何参数，单线程编译
 
-      - name: Verify build result
-        working-directory: ${{ github.workspace }}/build/bin
-        run: .\taos.exe --version # 验证编译产物是否可用
+      # 6. 验证编译结果
+      - name: Verify Build
+        shell: cmd
+        run: |
+          cd build\bin
+          taos.exe --version
 
-      - name: Upload Windows build artifacts
-        uses: actions/upload-artifact@v4.4.3 # 升级到支持 Node.js 24 的版本
+      # 7. 上传产物
+      - name: Upload Windows Binaries
+        uses: actions/upload-artifact@v4.4.3
         with:
-          name: tdengine-windows-x64-bin
-          path: |
-            ${{ github.workspace }}/build/bin/*.exe
-            ${{ github.workspace }}/build/bin/*.dll
-            ${{ github.workspace }}/build/bin/*.pdb
-          retention-days: 7 # 产物保留 7 天，可按需调整
+          name: tdengine-windows-x64
+          path: build/bin/
+          retention-days: 7
